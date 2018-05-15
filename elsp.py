@@ -24,8 +24,11 @@ if __name__ == "__main__":
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('file', metavar='[datafile]', help='datafile name')
-    parser.add_argument('ni',metavar='[number of items]',type=int, help='number of items in production')
-    parser.add_argument('cs',metavar='[production cycle size]',type=float, help='size in months of the production cycle')
+    parser.add_argument('p',metavar='[production unit cost]',type=int, dhelp='Cost of item in production')
+    parser.add_argument('q',metavar='[production setup cost]',type=int, help='Cost of setup to product the item')
+    parser.add_argument('h',metavar='[inventory holding cost]',type=int, help='Cost of hold the product in the inventory')
+    parser.add_argument('NT',metavar='[number of periods]',type=int, help='Number of periods of time')
+    parser.add_argument('-sInit',metavar='[inventory initial level]',type=float, default = 0, help='size in months of the production cycle')
     args = parser.parse_args()
     return args
 
@@ -53,27 +56,25 @@ def read_dat_file(args):
    
     dat = DotMap()
 
-    dat.items = args.ni
-    dat.cycleSize = args.cs
+    dat.p = args.p
+    dat.q = args.q
+    dat.h = args.h
+    dat.nt = args.NT
+    dat.sInit = args.sInit
 
-    I = range(dat.items)
+    I = range(dat.nt)
 
     data = []
     for i in I:
-        Dj,Qj,hj,cj = map(int,next(lines).split())
-        data.append([Dj,Qj,hj,cj])
+        dj = map(int,next(lines).split())
+        data.append([dj])
 
     fl.close()
 
-    dat.data = data
+    dat.dj = data
 
     #with open('ex.json', 'w') as fl:
     #     fl.write(json.dumps(dat.toDict()))
-
-    dat.ro = [ math.floor( data[i][0]/data[i][1]) for i in I];
-    
-    dat.ak = [ math.floor( 0.5 * (data[i][3]*dat.ro[i]*\
-                                  (data[i][1]-data[i][0]))) for i in I];
     
     return dat
 
@@ -83,21 +84,19 @@ def read_excel_file(args):
        raise Exception('file {:s} not found'.format(flname))
     dat = DotMap()
 
-    dat.items = args.ni
-    dat.cycleSize = args.cs
+    dat.p = args.p
+    dat.q = args.q
+    dat.h = args.h
+    dat.nt = args.NT
+    dat.sInit = args.sInit
 
-    df = pandas.read_excel(flname,sheetname='data', dtype = {'Dj': np.int32, 'Qj': np.int32, 'hj':np.int32, 'cj':np.int32} )
+    I = range(dat.nt)
+
+    df = pandas.read_excel(flname,sheetname='data', dtype = {'dj': np.int32} )
     data = [list(tp)[1:] for tp in df.to_records(index=False)] 
 
-    I = range(dat.items)
-    
-    dat.ro = [ math.floor( data[i][0]/data[i][1]) for i in I];
+    dat.dj = data;
 
-    
-    dat.ak = [ math.floor( 0.5 * (data[i][3]*dat.ro[i]*\
-                                 (data[i][1]-data[i][0]))) for i in I];
-    dat.data = data;
-     
     return dat
 
 def read_json_file(args):
@@ -109,68 +108,69 @@ def read_json_file(args):
          js = json.load(fl)
   
     dat = DotMap(js)
-
-    dat.items = args.ni
-    dat.cycleSize = args.cs
-
-
-    data = dat.data
- 
-    I = range(dat.items)
-
-    dat.ro = [ math.floor( data[i][0]/data[i][1]) for i in I];
     
-    dat.ak = [ math.floor( 0.5 * (data[i][3]*dat.ro[i]*\
-                                  (data[i][1]-data[i][0]))) for i in I];
-    
+    dat.p = args.p
+    dat.q = args.q
+    dat.h = args.h
+    dat.nt = args.NT
+    dat.sInit = args.sInit
+
     return dat ;
 
 def create_model(dat):
-    items = dat.items
-    cycleSize = dat.cycleSize 
-    sf = dat.sf 
+    p = dat.p
+    q = dat.q
+    h = dat.h
+    nt = dat.nt
+    sInit = dat.sInit
 
-    I = range(items)
-    J = range(cycleSize)
-    IJ = [(i,j) for i in I for j in J]
+    I = range(nt)
+    NT_1 = range(nt-1)
  
-    f = [ sf * dat.fac[j][2] for j in J] 
-    d = [ dat.cli[i][2] for i in I] 
-
+    dj = [ dat.ro[i] for i in I] 
+  
     cpx = cplex.Cplex()
-    
-    ix = {(i,j) : idx + cycleSize for idx,(i,j) in enumerate(IJ)}
-    
-    nx = ["x(" + str(i) + "," + str(j) + ")" for (i,j) in IJ]
-    ny = ["y(" + str(j) + ")" for j in J] 
+        
+    yt = ["y(" + str(i) + ")" for i in I] 
+    xt = ["x(" + str(i) + ")" for i in I] 
+    st = ["s(" + str(i) + ")" for i in I] 
     
 
     # cpx.variable.add = usar o mesmo número de vezes quanto o número de variáveis na função objetivo
-    cpx.variables.add(obj= [f[j] for j in J],
-                      lb = [0.0] * cycleSize,
-                      ub = [1.0] * cycleSize,
-                      types = ['B'] * cycleSize,
-                      names = ny)
-    # adiciona a variável y(j)
+    cpx.variables.add(obj= [q for i in I], 
+                      lb = [0.0] * nt,\
+                      ub = [1.0] * nt,\
+                      types = ['B'] * nt,\
+                      names = yt)
+    # adiciona a variável y(t)
     # obj = qual é o coeficiente que está multiplicando a variável adicionada na função objetivo
-    # lb = limite inferior 0 (variável binária) (vetor com cycleSize posições)
-    # ub = limite superior 1 (variável binária)
-    # types = binário
-    # nome = vetor de caracteres ny
+    # lb = limite inferior 0 (vetor com items posições)
+    # ub = limite superior 1 (bool)
+    # nome = vetor de caracteres yt
 
-    cpx.variables.add(obj= [d[i] * dat.c[i][j] for (i,j) in IJ],
-                      lb = [0.0] * items * cycleSize,
-                      ub = [cplex.infiitemsty] * items * cycleSize,
-                      names = nx)
-    # adiciona a variável x(ij)
+    cpx.variables.add(obj= [p for i in I], 
+                      lb = [0.0] * nt,\
+                      ub = [cplex.infinity] * nt,\
+                      names = xt)
+    # adiciona a variável x(t)
+    # obj = qual é o coeficiente que está multiplicando a variável adicionada na função objetivo
+    # lb = limite inferior 0 (vetor com items posições)
+    # ub = limite superior infinito
+    # nome = vetor de caracteres xt
+
+    cpx.variables.add(obj= [h for i in NT_1],
+                      lb = [0.0] * nt-1,
+                      ub = [cplex.infinity] * nt-1
+                      names = st)
+    # adiciona a variável s(t)
     # obj = qual é o coeficiente que está multiplicando a variável adicionada na função objetivo
     # lb = limite inferior 0
-    # ub = limite superior infiitemsto (não há limite superior)
-    # nome = vetor de caracteres nx
-
-    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([ix[(i,j)] for j in J], [1.0 for j in J])],
-                                senses = "E", 
-                                rhs = [1.0]) for i in I]
+    # ub = limite superior infinito
+    # nome = vetor de caracteres st
+    
+    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([j*dj[k]/i for k in K], [1.0 for k in K])],
+                                senses = "G", 
+                                rhs = [1.0]) for k in K]
     # adiciona a restrição somatário em j de x(ij) = 1
     # lin_expr = SparsePair (a matriz adiciona é esparsa, há vários zeros na matriz, portanto quero adicionar só os valores não nulos)
     # parâmetro 1 (SparsePair) = índice dos valores
@@ -178,9 +178,9 @@ def create_model(dat):
     # senses = E (a expressão é uma igualdade)
     # rhs = (right hand side) o lado direito é sempre igual a 1 (??)
 
-    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([ix[(i,j)], j], [1.0,-1.0])],
-                                senses = "L", 
-                                rhs = [0.0]) for (i,j) in IJ]
+    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([k-1 , i, dj[i], j, k], [1.0, 1.0,-1.0, -1.0])],
+                                senses = "E", 
+                                rhs = [0.0]) for i in I]
     # adiciona restrição x(ij) - y(j) <= 0
     # lin_expr = SparsePair (a matriz adiciona é esparsa, há vários zeros na matriz, portanto quero adicionar só os valores não nulos)
     # parâmetro 1 = índice dos valores
@@ -188,7 +188,7 @@ def create_model(dat):
     # senses = L (a expressão é uma desigualdade menor ou igual)
     # rhs = (right hand side) o lado direito é sempre igual a 0 (??)
 
-    cpx.write("uflp.lp")
+    cpx.write("elsp.lp")
     return cpx
 
 def solve_model(dat,cpx):
@@ -214,11 +214,11 @@ def solve_model(dat,cpx):
        print(statusMsg)
        sys.exit(-1)
     else:
-       cycleSize = dat.cycleSize
+       cycle_size = dat.cycle_size
        I = range(dat.items)
-       J = range(dat.cycleSize) 
+       J = range(dat.cycle_size) 
        IJ = [(i,j) for i in I for j in J]
-       ix = {(i,j) : idx + cycleSize for idx,(i,j) in enumerate(IJ)}
+       ix = {(i,j) : idx + cycle_size for idx,(i,j) in enumerate(IJ)}
 
        of = cpx.solution.get_objective_value()
        x = cpx.solution.get_values()

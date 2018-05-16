@@ -13,7 +13,7 @@ import cplex
 
 if __name__ == "__main__":
   args = parse_arguments()
-  dat = read_data(args)
+  dat = read_dat_file(args)
   cpx = create_model(dat)
   sol = solve_model(dat,cpx)
   print_sol(dat,sol)
@@ -28,19 +28,6 @@ def parse_arguments():
   parser.add_argument('sInit',metavar='[inventory initial level]',type=float, default = 0, help='size in months of the production cycle')
   args = parser.parse_args()
   return args
-
-def read_data(args):
-  ft = args.file[-1]
-  dat = None
-  if (ft == 't'):
-    dat = read_dat_file(args) 
-  elif (ft == 'x'):
-    dat = read_excel_file(args)
-  elif (ft == 'n'): 
-    dat = read_json_file(args)
-  else: 
-    raise ValueError('datafile format unknown')
-  return dat
 
 def read_dat_file(args):
   flname = args.file
@@ -72,45 +59,6 @@ def read_dat_file(args):
   
   return dat
 
-def read_excel_file(args):
-  flname = args.file
-  if (os.path.isfile(flname) == False):
-    raise Exception('file {:s} not found'.format(flname))
-  dat = DotMap()
-
-  dat.p = args.p
-  dat.q = args.q
-  dat.h = args.hcost
-  dat.nt = args.NT
-  dat.sInit = args.sInit
-  
-  I = range(dat.nt)
-
-  df = pandas.read_excel(flname,sheetname='data', dtype = {'dj': np.int32} )
-  data = [list(tp)[1:] for tp in df.to_records(index=False)] 
-
-  dat.data = data;
-
-  return dat
-
-def read_json_file(args):
-  flname = args.file
-  if (os.path.isfile(flname) == False):
-    raise Exception('file {:s} not found'.format(flname))
-
-  with open(flname) as fl:
-    js = json.load(fl)
-
-  dat = DotMap(js)
-
-  dat.p = args.p
-  dat.q = args.q
-  dat.h = args.hcost
-  dat.nt = args.NT
-  dat.sInit = args.sInit
-  
-  return dat
-
 def create_model(dat):
   p = dat.p
   q = dat.q
@@ -132,12 +80,12 @@ def create_model(dat):
 
   cpx = cplex.Cplex()
       
-  yt = ["y(" + str(i) + ")" for i in I] 
-  xt = ["x(" + str(i) + ")" for i in I] 
-  st = ["s(" + str(i) + ")" for i in NT_1] 
+  yt = ["yt(" + str(i) + ")" for i in I] 
+  xt = ["xt(" + str(i) + ")" for i in I] 
+  st = ["st(" + str(i) + ")" for i in NT_1] 
 
   # cpx.variable.add = usar o mesmo número de vezes quanto o número de variáveis na função objetivo
-  cpx.variables.add(obj= [p for i in I], 
+  cpx.variables.add(obj= [p] * nt, \
                     lb = [0.0] * nt,\
                     ub = [cplex.infinity] * nt,\
                     names = xt)
@@ -147,7 +95,7 @@ def create_model(dat):
   # ub = limite superior infinito
   # nome = vetor de caracteres xt
 
-  cpx.variables.add(obj= [q for i in I],\
+  cpx.variables.add(obj= [q]* nt,\
                     lb = [0.0] * nt,\
                     ub = [1.0] * nt,\
                     types = ['B'] * nt,\
@@ -158,7 +106,7 @@ def create_model(dat):
   # ub = limite superior 1 (bool)
   # nome = vetor de caracteres yt
 
-  cpx.variables.add(obj= [h for i in NT_1],\
+  cpx.variables.add(obj= [h] * nt_1,\
                     lb = [0.0] * nt_1,\
                     ub = [cplex.infinity]*nt_1,\
                     names = st)

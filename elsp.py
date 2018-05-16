@@ -26,7 +26,7 @@ def parse_arguments():
     parser.add_argument('file', metavar='[datafile]', help='datafile name')
     parser.add_argument('p',metavar='[production unit cost]',type=int, dhelp='Cost of item in production')
     parser.add_argument('q',metavar='[production setup cost]',type=int, help='Cost of setup to product the item')
-    parser.add_argument('h',metavar='[inventory holding cost]',type=int, help='Cost of hold the product in the inventory')
+    parser.add_argument('hcost',metavar='[inventory holding cost]',type=int, help='Cost of hold the product in the inventory')
     parser.add_argument('NT',metavar='[number of periods]',type=int, help='Number of periods of time')
     parser.add_argument('-sInit',metavar='[inventory initial level]',type=float, default = 0, help='size in months of the production cycle')
     args = parser.parse_args()
@@ -125,6 +125,7 @@ def create_model(dat):
     sInit = dat.sInit
 
     I = range(nt)
+    J = range(1,nt)
     NT_1 = range(nt-1)
  
     dj = [ dat.ro[i] for i in I] 
@@ -134,9 +135,18 @@ def create_model(dat):
     yt = ["y(" + str(i) + ")" for i in I] 
     xt = ["x(" + str(i) + ")" for i in I] 
     st = ["s(" + str(i) + ")" for i in I] 
-    
 
     # cpx.variable.add = usar o mesmo número de vezes quanto o número de variáveis na função objetivo
+    cpx.variables.add(obj= [p for i in I], 
+                      lb = [0.0] * nt,\
+                      ub = [cplex.infinity] * nt,\
+                      names = xt)
+    # adiciona a variável x(t)
+    # obj = qual é o coeficiente que está multiplicando a variável adicionada na função objetivo
+    # lb = limite inferior 0 (vetor com items posições)
+    # ub = limite superior infinito
+    # nome = vetor de caracteres xt
+
     cpx.variables.add(obj= [q for i in I], 
                       lb = [0.0] * nt,\
                       ub = [1.0] * nt,\
@@ -148,40 +158,32 @@ def create_model(dat):
     # ub = limite superior 1 (bool)
     # nome = vetor de caracteres yt
 
-    cpx.variables.add(obj= [p for i in I], 
-                      lb = [0.0] * nt,\
-                      ub = [cplex.infinity] * nt,\
-                      names = xt)
-    # adiciona a variável x(t)
-    # obj = qual é o coeficiente que está multiplicando a variável adicionada na função objetivo
-    # lb = limite inferior 0 (vetor com items posições)
-    # ub = limite superior infinito
-    # nome = vetor de caracteres xt
-
     cpx.variables.add(obj= [h for i in NT_1],
                       lb = [0.0] * nt-1,
-                      ub = [cplex.infinity] * nt-1
+                      ub = [cplex.infinity] * nt-1,
                       names = st)
     # adiciona a variável s(t)
     # obj = qual é o coeficiente que está multiplicando a variável adicionada na função objetivo
     # lb = limite inferior 0
     # ub = limite superior infinito
     # nome = vetor de caracteres st
-    
-    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([j*dj[k]/i for k in K], [1.0 for k in K])],
-                                senses = "G", 
-                                rhs = [1.0]) for k in K]
-    # adiciona a restrição somatário em j de x(ij) = 1
+
+    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, i+(2*nt),\
+                                                            i+((2*nt)-1) if i+(2*nt-1) >= (2*nt) else sInit,\
+                                                            dj[i] ], [1.0, -1.0, 1.0, -1.0])],
+                                senses = "E", 
+                                rhs = [0])for i in I]
+    # adiciona a restrição dem_satt -> st-1 + xt = dt + st
     # lin_expr = SparsePair (a matriz adiciona é esparsa, há vários zeros na matriz, portanto quero adicionar só os valores não nulos)
     # parâmetro 1 (SparsePair) = índice dos valores
     # parâmetro 2 (SparsePair) = valores
     # senses = E (a expressão é uma igualdade)
-    # rhs = (right hand side) o lado direito é sempre igual a 1 (??)
+    # rhs = (right hand side)
 
-    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([k-1 , i, dj[i], j, k], [1.0, 1.0,-1.0, -1.0])],
+    [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i+nt, i], [dj[j], -1.0]) for j in I],
                                 senses = "E", 
                                 rhs = [0.0]) for i in I]
-    # adiciona restrição x(ij) - y(j) <= 0
+    # adiciona restrição vubt: xt =< yt*somatorio_0_a_t(dk) ---->  yt*somatorio_0_a_t(dk) - xt >= 0
     # lin_expr = SparsePair (a matriz adiciona é esparsa, há vários zeros na matriz, portanto quero adicionar só os valores não nulos)
     # parâmetro 1 = índice dos valores
     # parâmetro 2 = valores
@@ -214,25 +216,25 @@ def solve_model(dat,cpx):
        print(statusMsg)
        sys.exit(-1)
     else:
-       cycle_size = dat.cycle_size
-       I = range(dat.items)
-       J = range(dat.cycle_size) 
-       IJ = [(i,j) for i in I for j in J]
-       ix = {(i,j) : idx + cycle_size for idx,(i,j) in enumerate(IJ)}
-
+       nt = dat.nt
+       I = range(nt)
+       NT_1 = range(1,nt)
+       
        of = cpx.solution.get_objective_value()
        x = cpx.solution.get_values()
 
        sol = DotMap()
        sol.msg = cpx.solution.get_status_string() 
        sol.of = of
-       sol.y  = [j for j in J if x[j] > 0.001] 
-       sol.ny = len(sol.y)
-       sol.x  = [(i,j) for (i,j) in IJ if x[ix[(i,j)]] > 0.001] 
+       sol.xt  = [i for i in I if x[i] > 0.001] 
+       sol.yt  = [i for i in I if x[i+nt] > 0.001] 
+       sol.st  = [i for i in J if x[i+(2*nt)] > 0.001] 
+       sol.st[0] = dat.sInit;
+       
     return sol
 
 def print_sol(dat,sol):
-    I = range(dat.items)
+    I = range(dat.nt)
     print("Solver status     : {:s}".format(sol.msg))
     print("Objective function: {:18,.2f}".format(sol.of))
     print("# facilities      : {:18d}".format(sol.ny))
@@ -244,13 +246,13 @@ def print_sol(dat,sol):
        [print("{:3d}".format(i),end=' ') for i in I if (i,j) in sol.x]
        print()
 
-def plot_sol(dat, sol):
-    I = range(dat.items)
-    for j in sol.y:
-            for i in I:
-                if (i,j) in sol.x:
-                    xc = np.array([dat.cli[i][0], dat.fac[j][0]])
-                    xy = np.array([dat.cli[i][1], dat.fac[j][1]])
-                    plt.plot(xc, xy, 'ko-')
-    plt.show()
-    return
+# def plot_sol(dat, sol):
+#     I = range(dat.items)
+#     for j in sol.y:
+#             for i in I:
+#                 if (i,j) in sol.x:
+#                     xc = np.array([dat.cli[i][0], dat.fac[j][0]])
+#                     xy = np.array([dat.cli[i][1], dat.fac[j][1]])
+#                     plt.plot(xc, xy, 'ko-')
+#     plt.show()
+#     return

@@ -1,6 +1,4 @@
 
-# author : ricardo camargo  | rcamargo@dep.ufmg.br
-
 from elsp import *
 import sys
 import os
@@ -14,7 +12,7 @@ from dotmap import DotMap
 import cplex
 
 if __name__ == "__main__":
-  args = ['ex.dat',100, 5000, 5, 8, 200]
+  args = parse_arguments()
   dat = read_data(args)
   cpx = create_model(dat)
   sol = solve_model(dat,cpx)
@@ -23,16 +21,16 @@ if __name__ == "__main__":
 def parse_arguments():
   parser = argparse.ArgumentParser()
   parser.add_argument('file', metavar='[datafile]', help='datafile name')
-  parser.add_argument('p',metavar='[production unit cost]',type=int, dhelp='Cost of item in production')
+  parser.add_argument('p',metavar='[production unit cost]',type=int, help='Cost of item in production')
   parser.add_argument('q',metavar='[production setup cost]',type=int, help='Cost of setup to product the item')
   parser.add_argument('hcost',metavar='[inventory holding cost]',type=int, help='Cost of hold the product in the inventory')
   parser.add_argument('NT',metavar='[number of periods]',type=int, help='Number of periods of time')
-  parser.add_argument('-sInit',metavar='[inventory initial level]',type=float, default = 0, help='size in months of the production cycle')
+  parser.add_argument('sInit',metavar='[inventory initial level]',type=float, default = 0, help='size in months of the production cycle')
   args = parser.parse_args()
   return args
 
 def read_data(args):
-  ft = args[0][-1]
+  ft = args.file[-1]
   dat = None
   if (ft == 't'):
     dat = read_dat_file(args) 
@@ -45,7 +43,7 @@ def read_data(args):
   return dat
 
 def read_dat_file(args):
-  flname = args[0]
+  flname = args.file
   if (os.path.isfile(flname) == False):
     raise Exception('file {:s} not found'.format(flname))
 
@@ -55,11 +53,11 @@ def read_dat_file(args):
  
   dat = DotMap()
 
-  dat.p = args[1]
-  dat.q = args[2]
-  dat.h = args[3]
-  dat.nt = args[4]
-  dat.sInit = args[5]
+  dat.p = args.p
+  dat.q = args.q
+  dat.h = args.hcost
+  dat.nt = args.NT
+  dat.sInit = args.sInit
 
   I = range(dat.nt)
 
@@ -80,11 +78,11 @@ def read_excel_file(args):
     raise Exception('file {:s} not found'.format(flname))
   dat = DotMap()
 
-  dat.p = args[1]   
-  dat.q = args[2]
-  dat.h = args[3]
-  dat.nt = args[4]
-  dat.sInit = args[5]
+  dat.p = args.p
+  dat.q = args.q
+  dat.h = args.hcost
+  dat.nt = args.NT
+  dat.sInit = args.sInit
   
   I = range(dat.nt)
 
@@ -105,11 +103,11 @@ def read_json_file(args):
 
   dat = DotMap(js)
 
-  dat.p = args[1]
-  dat.q = args[2]
-  dat.h = args[3]
-  dat.nt = args[4]
-  dat.sInit = args[5]
+  dat.p = args.p
+  dat.q = args.q
+  dat.h = args.hcost
+  dat.nt = args.NT
+  dat.sInit = args.sInit
   
   return dat
 
@@ -124,12 +122,11 @@ def create_model(dat):
 
 
   I = range(nt)
-  J = range(1,nt)
   NT_1 = range(nt-1)
 
   s_begin = 2*nt;
-  s_begin_1 = s_begin - 1;
-
+  s_begin_1 = 2*nt - 1;
+  
   dj = []
   [dj.append(float(dat.data[i][0])) for i in I]
 
@@ -171,9 +168,17 @@ def create_model(dat):
   # ub = limite superior infinito
   # nome = vetor de caracteres st
 
-  [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, (i+s_begin), (i+s_begin_1)], [1.0, -1.0, 1.0])],\
-                          senses = "E",\
-                          rhs = [dj[i]]) for i in J]
+  ####################################             Restrição dem_satt            ###########################################################
+  # for i in I:
+  #   if i > 0:
+  #     cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, (i+s_begin), (i+(s_begin_1))], [1.0, -1.0, 1.0])],\
+  #                         senses = "E",\
+  #                         rhs = [dj[i]])
+  #   else:
+  #     cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, (i+s_begin)], [1.0, -1.0])],\
+  #                         senses = "E",\
+  #                         rhs = [dj[i]])
+  #############################################################################################################################
 
   # adiciona a restrição dem_satt -> st-1 + xt = dt + st
   # lin_expr = SparsePair (a matriz adiciona é esparsa, há vários zeros na matriz, portanto quero adicionar só os valores não nulos)
@@ -181,8 +186,11 @@ def create_model(dat):
   # parâmetro 2 (SparsePair) = valores
   # senses = E (a expressão é uma igualdade)
   # rhs = (right hand side)
+  sum_dj = 0
+  for i in I:
+    sum_dj += dj[i]
 
-  [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i+nt, i], [dj[j], -1.0]) for j in I],\
+  [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([(i+nt), i], [sum_dj, -1.0])],\
                               senses = "E", \
                               rhs = [0.0]) for i in I]
   # adiciona restrição vubt: xt =< yt*somatorio_0_a_t(dk) ---->  yt*somatorio_0_a_t(dk) - xt >= 0
@@ -228,26 +236,23 @@ def solve_model(dat,cpx):
     sol = DotMap()
     sol.msg = cpx.solution.get_status_string() 
     sol.of = of
-    sol.xt  = [i for i in I if x[i] > 0.001] 
-    sol.yt  = [i for i in I if x[i+nt] > 0.001] 
-    sol.st  = [i for i in J if x[i+(2*nt)] > 0.001] 
-    sol.st[0] = dat.sInit;
+    sol.xt  = [x[i] for i in I ]#if x[i] > 0.001] 
+    sol.yt  = [x[i+nt] for i in I ]#if x[i+nt] > 0.001] 
+    sol.st  = [x[i+((2*nt)-1)] for i in NT_1 ]#if x[i+(2*(nt-1))] > 0.001] 
+
+    sol.st.insert(0, dat.sInit);
 
   return sol
 
 def print_sol(dat,sol):
-    I = range(dat.ni)
-    I = range(dat.ni)
-    print("Solver status     : {:s}".format(sol.msg))
-    print("Objective function: {:18,.2f}".format(sol.of))
-    print("# facilities      : {:18d}".format(sol.ny))
-    print("facilities        : ",end='')
-    [print("{:3d}".format(j),end=' ') for j in sol.y]
-    print("\nallocation        :")
-    for j in sol.y:
-       print("{:17d} : ".format(j),end='')
-       [print("{:3d}".format(i),end=' ') for i in I if (i,j) in sol.x]
-       print()     
+    I = range(dat.nt)
+    print("Solver status          : {:s}".format(sol.msg))
+    print("Objective function     : {:18,.2f}".format(sol.of))
+    print("\n\tTime period\t|\tProduction batch size\t|\tProduction set-up\t|\tEnd inventory level")
+    for i in I:
+      print("\t  {:.2f}\t\t|{:18,.2f}\t\t|{:18,.2f}\t\t|{:18,.2f}\t".format(i, sol.xt[i], sol.yt[i], sol.st[i]))
+    
+
 
       
 

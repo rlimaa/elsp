@@ -82,7 +82,7 @@ def create_model(dat):
       
   yt = ["yt(" + str(i) + ")" for i in I] 
   xt = ["xt(" + str(i) + ")" for i in I] 
-  st = ["st(" + str(i) + ")" for i in NT_1] 
+  st = ["st(" + str(i) + ")" for i in I] 
 
   # cpx.variable.add = usar o mesmo número de vezes quanto o número de variáveis na função objetivo
   cpx.variables.add(obj= [p] * nt, \
@@ -106,9 +106,9 @@ def create_model(dat):
   # ub = limite superior 1 (bool)
   # nome = vetor de caracteres yt
 
-  cpx.variables.add(obj= [h] * nt_1,\
-                    lb = [0.0] * nt_1,\
-                    ub = [cplex.infinity]*nt_1,\
+  cpx.variables.add(obj= [h] * nt,\
+                    lb = [0.0] * nt,\
+                    ub = [cplex.infinity]*nt,\
                     names = st)
   # adiciona a variável s(t)
   # obj = qual é o coeficiente que está multiplicando a variável adicionada na função objetivo
@@ -117,15 +117,15 @@ def create_model(dat):
   # nome = vetor de caracteres st
 
   ####################################             Restrição dem_satt            ###########################################################
-  # for i in I:
-  #   if i > 0:
-  #     cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, (i+s_begin), (i+(s_begin_1))], [1.0, -1.0, 1.0])],\
-  #                         senses = "E",\
-  #                         rhs = [dj[i]])
-  #   else:
-  #     cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, (i+s_begin)], [1.0, -1.0])],\
-  #                         senses = "E",\
-  #                         rhs = [dj[i]])
+  for i in I:
+    if i > 0:
+      cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, (i+s_begin), (i+(s_begin_1))], [1.0, -1.0, 1.0])],\
+                          senses = "E",\
+                          rhs = [dj[i]])
+    else:
+      cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([i, (i+s_begin)], [1.0, -1.0])],\
+                          senses = "E",\
+                          rhs = [dj[i] - sInit])
   #############################################################################################################################
 
   # adiciona a restrição dem_satt -> st-1 + xt = dt + st
@@ -139,7 +139,7 @@ def create_model(dat):
     sum_dj += dj[i]
 
   [cpx.linear_constraints.add(lin_expr=[cplex.SparsePair([(i+nt), i], [sum_dj, -1.0])],\
-                              senses = "E", \
+                              senses = "G", \
                               rhs = [0.0]) for i in I]
   # adiciona restrição vubt: xt =< yt*somatorio_0_a_t(dk) ---->  yt*somatorio_0_a_t(dk) - xt >= 0
   # lin_expr = SparsePair (a matriz adiciona é esparsa, há vários zeros na matriz, portanto quero adicionar só os valores não nulos)

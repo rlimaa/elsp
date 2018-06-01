@@ -1,4 +1,3 @@
-
 from elsp import *
 import sys
 import os
@@ -11,13 +10,6 @@ from dotmap import DotMap
 
 import cplex
 
-if __name__ == "__main__":
-  args = parse_arguments()
-  dat = read_dat_file(args)
-  cpx = create_model(dat)
-  sol = solve_model(dat,cpx)
-  print_sol(dat,sol)
-
 def parse_arguments():
   parser = argparse.ArgumentParser()
   parser.add_argument('file', metavar='[datafile]', help='datafile name')
@@ -28,6 +20,19 @@ def parse_arguments():
   parser.add_argument('sInit',metavar='[inventory initial level]',type=float, default = 0, help='size in months of the production cycle')
   args = parser.parse_args()
   return args
+
+def read_data(args):
+   ft = args.file[-1] # last character = type of file
+   dat = None
+   if (ft == 't'):
+      dat = read_dat_file(args) 
+   elif (ft == 'x'):
+      dat = read_excel_file(args)
+   elif (ft == 'n'): 
+      dat = read_json_file(args)
+   else: 
+      raise ValueError('datafile format unknown')
+   return dat
 
 def read_dat_file(args):
   flname = args.file
@@ -58,6 +63,54 @@ def read_dat_file(args):
   dat.data = data
   
   return dat
+
+def read_excel_file(args):
+    flname = args.file
+    if (os.path.isfile(flname) == False):
+       raise Exception('file {:s} not found'.format(flname))
+    dat = DotMap()
+
+    dat.p = args.p
+    dat.q = args.q
+    dat.h = args.hcost
+    dat.nt = args.NT
+    dat.sInit = args.sInit
+
+    df = pandas.read_excel(flname, sheet_name = 'dj', dtype = np.int32)
+
+    I = range(dat.nt)
+    data = []
+    for i in I:
+        data.append([int(df['dj'][i])])
+        
+    dat.data = data
+    return dat
+
+def read_json_file(args):
+    flname = args.file
+    if (os.path.isfile(flname) == False):
+        raise Exception('file {:s} not found'.format(flname))
+
+    with open(flname) as fl:
+            js = json.load(fl)
+
+    dat = DotMap(js)
+
+    dat.p = args.p
+    dat.q = args.q
+    dat.h = args.hcost
+    dat.nt = args.NT
+    dat.sInit = args.sInit
+    
+    data = []
+
+    I = range(dat.nt)
+    for i in I:
+        data.append([int(js["dj"][i])])
+    
+    fl.close()
+    dat.data = data
+    return dat 
 
 def create_model(dat):
   p = dat.p
@@ -199,9 +252,11 @@ def print_sol(dat,sol):
     print("\n\tTime period\t|\tProduction batch size\t|\tProduction set-up\t|\tEnd inventory level")
     for i in I:
       print("\t  {:.2f}\t\t|{:18,.2f}\t\t|{:18,.2f}\t\t|{:18,.2f}\t".format(i, sol.xt[i], sol.yt[i], sol.st[i]))
-    
 
 
-      
-
-
+if __name__ == "__main__":
+  args = parse_arguments()
+  dat = read_data(args)
+  cpx = create_model(dat)
+  sol = solve_model(dat,cpx)
+  print_sol(dat,sol)
